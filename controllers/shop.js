@@ -1,9 +1,15 @@
 const Product = require('../models/product');
+const Order = require('../models/order');
 
 exports.getProductList = (req, res) => {
-    Product.findAll()
+    Product.find()
         .then((products) => {
-            res.render('shop/product-list', {pageTitle: 'Products', path: '/products', products});
+            res.render('shop/product-list', {
+                pageTitle: 'Products',
+                path: '/products',
+                products,
+                isAuthenticated: req.session.isAuthenticated,
+            });
         })
         .catch(err => console.log);
 }
@@ -15,27 +21,42 @@ exports.getProductDetails = (req, res) => {
             if (!product) {
                 res.redirect('/404');
             } else {
-                res.render('shop/product-detail', {pageTitle: product.title, path: '/products', product});
+                res.render('shop/product-detail', {
+                    pageTitle: product.title,
+                    path: '/products',
+                    product,
+                    isAuthenticated: req.session.isAuthenticated,
+                });
             }
         })
         .catch(err => console.log);
 }
 
 exports.getIndex = (req, res) => {
-    Product.findAll()
+    Product.find()
         .then((products) => {
-            res.render('shop/index', {pageTitle: 'Shop', path: '/', products});
+            res.render('shop/index', {
+                pageTitle: 'Shop',
+                path: '/',
+                products,
+                isAuthenticated: req.session.isAuthenticated,
+            });
         })
         .catch(err => console.log);
 }
 
 exports.getCart = (req, res) => {
-    req.user.getCart()
-        .then((products) => {
-            console.log('products');
-            console.log(products);
-            const totalPrice = products.reduce((sum, product) => sum + product.price * product.quantity, 0);
-            res.render('shop/cart', {pageTitle: 'Your Cart', path: '/cart', cart: {products, totalPrice}});
+    req.user
+        .populate('cart.items.productId')
+        .then(user => {
+            const products = user.cart.items;
+            const totalPrice = products.reduce((sum, product) => sum + product.productId.price * product.quantity, 0);
+            res.render('shop/cart', {
+                pageTitle: 'Your Cart',
+                path: '/cart',
+                cart: {products, totalPrice},
+                isAuthenticated: req.session.isAuthenticated,
+            });
         })
         .catch(err => console.log);
 }
@@ -53,7 +74,7 @@ exports.postAddToCart = (req, res) => {
 
 exports.postDeleteFromCart = (req, res) => {
     const id = req.body.productId;
-    req.user.deleteProductFromCart(id)
+    req.user.deleteFromCart(id)
         .then(() => {
             res.redirect('/cart')
         })
@@ -63,12 +84,13 @@ exports.postDeleteFromCart = (req, res) => {
 }
 
 exports.getOrders = (req, res) => {
-    req.user.getOrders()
+    Order.find({'user.userId': req.user._id})
         .then(orders => {
             res.render('shop/orders', {
                 path: '/orders',
                 pageTitle: 'Your Orders',
-                orders
+                orders,
+                isAuthenticated: req.session.isAuthenticated,
             });
         })
         .catch(err => {
@@ -77,7 +99,25 @@ exports.getOrders = (req, res) => {
 };
 
 exports.postOrder = (req, res) => {
-    req.user.addOrder()
+    req.user
+        .populate('cart.items.productId')
+        .then(user => {
+            const products = user.cart.items.map((item) => ({
+                product: {...item.productId._doc},
+                quantity: item.quantity,
+            }));
+            const order = new Order({
+                products,
+                user: {
+                    userId: req.user._id,
+                    email: req.user.email,
+                },
+            });
+            return order.save();
+        })
+        .then(() => {
+            return req.user.clearCart();
+        })
         .then(() => res.redirect('/orders'))
         .catch(err => {
             console.log(err);
